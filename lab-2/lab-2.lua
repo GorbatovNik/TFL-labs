@@ -256,11 +256,27 @@ function Solve(testName)
 
         dump(srs, "srs")
 
+        for w, transp in pairs(classes) do
+            output:write(string.format("%s := { ", w))
+            for v, u in pairs(transp) do
+                output:write(string.format("(%s,%s), ", v, u))
+            end
+            output:write("}\n")
+        end
+
         for s1, s2 in pairs(srs) do
             output:write(string.format("%s->%s\n", s1, s2))
         end
         input:close()
+        output:flush()
         output:close()
+        aut = {}
+        autStart = nil
+        autFinal = {}
+        classes = {}
+        letters = {}
+        bor = {}
+        srs = {}
     else
         print(err)
     end
