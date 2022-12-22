@@ -1,3 +1,42 @@
+--------------------------------------------------------------------------------------
+-- За основу была взята реализация https://github.com/Ankalot/FLT-labs/tree/main/3
+-- Добавлено:
+-- 1) Элементарный тестер
+-- Исправлено:
+-- 1) Ошибка в eliminEpsRules (на тестах 4 и 10)
+-- 2) Ошибка в leftRecAlgorithm (полученная грамматика почти на всех тестах была не
+-- эквивалентна исходной)
+--------------------------------------------------------------------------------------
+
+CFG_CHECK_EQUAL = false         -- Если true, то полученные грамматики будут проверены
+                                -- на неэквивалентность исходной сравнением множеств
+                                -- порождаемых ими слов ограниченной длины
+CFG_CHECK_EQUAL_MAXH = 15       -- Максимальная глубина анализа грамматики
+CFG_CHECK_EQUAL_MAXWORDLEN = 8  -- Максимальная длина рассматриваемых слов
+
+g_language = {}
+g_size = nil
+
+local function dumpImpl(t, sh)
+    if type(t) ~= "table" then
+        io.write(tostring(t))
+    else
+        io.write("{\n")
+        for k, v in pairs(t) do
+            io.write(string.rep("\t", sh + 1) .. "[" .. tostring(k) .. "] = ")
+            dumpImpl(v, sh + 1)
+            io.write(",\n")
+        end
+        io.write(string.rep("\t", sh) .. "}")
+    end
+end
+
+local function dump(t, name)
+    io.write(name .. " = ")
+    dumpImpl(t, 0)
+    io.write("\n")
+end
+
 function eqRules(rule1, rule2)
     if #rule1 ~= #rule2 then
         return false
@@ -332,7 +371,9 @@ end
 function checkIfNullableNterm(nterm, nullableNterms, nonNullableNterms, rules, prevNterms)
     -- prevNterms нужно, чтобы не улететь в бесконечную рекурсию
     local ntermRules = rules[nterm]
-    for i, rule in ipairs(ntermRules) do
+    local i = #ntermRules
+    while i >= 1 do
+        local rule = ntermRules[i]
         if #rule == 0 then
             table.remove(ntermRules, i) -- можно сразу тут убирать явные эпсилон правила
         else
@@ -349,8 +390,10 @@ function checkIfNullableNterm(nterm, nullableNterms, nonNullableNterms, rules, p
                         goto continue -- сделано, чтобы не зациклиться в рекурсии
                     end
                     table.insert(prevNterms, locNterm)
+                    if nterm ~= locNterm then
                     checkIfNullableNterm(locNterm, nullableNterms, nonNullableNterms, 
                                          rules, prevNterms)
+                    end
                 end
                 if not nullableNterms[locNterm] then
                     goto continue
@@ -360,6 +403,7 @@ function checkIfNullableNterm(nterm, nullableNterms, nonNullableNterms, rules, p
         nullableNterms[nterm] = true
         goto ret
         ::continue::
+        i = i - 1
     end
     nonNullableNterms[nterm] = true
     ::ret::
@@ -370,32 +414,41 @@ function eliminEpsRules(rules)
     for nterm, ntermRules in pairs(rules) do
         local ntermRulesNum = #ntermRules
         local i = 1
-        while i <= ntermRulesNum do
+        while i <= #ntermRules do
             local rule = ntermRules[i]
+            if not rule then
+                dump(rules, "rules")
+                dump(nterm, "nterm")
+                dump(i, "i")
+                dump(ntermRulesNum, "ntermRulesNum")
+                dump(#ntermRules, "size")
+            end
             if #rule == 0 then
                 table.remove(ntermRules, i)
                 nullableNterms[nterm] = true
-            end
-            for j, smth in ipairs(rule) do
-                if type(smth) == "table" then
-                    local locNterm = smth[1]
-                    if not nonNullableNterms[locNterm] then
-                        if not nullableNterms[locNterm] then
-                            checkIfNullableNterm(locNterm, nullableNterms,
-                                                 nonNullableNterms, rules, {nterm})
-                        end
-                        if nullableNterms[locNterm] then
-                            local newRule = copy(rule)
-                            table.remove(newRule, j)
-                            if not hasRuleIn(ntermRules, newRule) then
-                                table.insert(ntermRules,  newRule)
-                                ntermRulesNum = ntermRulesNum + 1
+                ntermRulesNum = ntermRulesNum - 1
+            else
+                for j, smth in ipairs(rule) do
+                    if type(smth) == "table" then
+                        local locNterm = smth[1]
+                        if not nonNullableNterms[locNterm] then
+                            if not nullableNterms[locNterm] then
+                                checkIfNullableNterm(locNterm, nullableNterms,
+                                                    nonNullableNterms, rules, {nterm})
+                            end
+                            if nullableNterms[locNterm] then
+                                local newRule = copy(rule)
+                                table.remove(newRule, j)
+                                if not hasRuleIn(ntermRules, newRule) then
+                                    table.insert(ntermRules,  newRule)
+                                    ntermRulesNum = ntermRulesNum + 1
+                                end
                             end
                         end
                     end
                 end
+                i = i + 1
             end
-            i = i + 1
         end
     end
 end
@@ -456,7 +509,9 @@ function blumKochAlgorithm(rules, startNterm)
     local stateMachines = makeStateMachinesFromGrammar(rules) -- хоть и названия состояний у автоматов совпадают, но
                                                               -- сами состояния разные, тк автоматы разные
     reverseStateMachines(stateMachines)
-    outputStateMachines(stateMachines)
+    if not CFG_CHECK_EQUAL then
+        outputStateMachines(stateMachines)
+    end
     local grammars = makeGrammarsFromStateMachines(stateMachines) -- аналогично, нетерминалы в разных грамматиках называются
                                                                   -- одинаково только ради удобства, на деле они разные
     local newStartNterm1Part = stateMachines[startNterm].startState.name
@@ -559,14 +614,13 @@ function useNtermsLexOrd(rules, ntermsLexOrd)
             local prevNtermRulesCount = #ntermRules
             while (i <= prevNtermRulesCount) do
                 if ruleIsLeftRec(ntermRules[i], nterm) then
+                    table.remove(ntermRules[i], 1)
+                    table.insert(rules[newNterm], concatRules(copy(ntermRules[i]), {{newNterm}}))
+                    table.insert(rules[newNterm], copy(ntermRules[i]))
                     table.remove(ntermRules, i)
-                    prevNtermRulesCount = prevNtermRulesCount - 1 
+                    prevNtermRulesCount = prevNtermRulesCount - 1
                 else
                     table.insert(ntermRules, concatRules(ntermRules[i], {{newNterm}}))
-                    for _, leftRecRule in ipairs(leftRecRules) do
-                        table.insert(rules[newNterm], copy(leftRecRule))
-                        table.insert(rules[newNterm], concatRules(leftRecRule, {{newNterm}}))
-                    end 
                     i = i + 1
                 end
             end
@@ -662,7 +716,7 @@ function inputRules()
         first, last = line:find("%[%a+%d*%]", 0)
         local startNterm = line:sub(first + 1, last - 1)
         if not rules[startNterm] then
-           rules[startNterm] = {} 
+           rules[startNterm] = {}
         end
         local rule = {}
 
@@ -726,13 +780,90 @@ function removeUnreachableNterms(rules, startNterm)
     end
 end
 
+local maxh, maxlen = CFG_CHECK_EQUAL_MAXH, CFG_CHECK_EQUAL_MAXWORDLEN
+function expand(nterm, rules, len, h)
+    if not len then len = 1 end
+    if not h then h = 0 end
+    if h > maxh then return nil end
+    local wordsAll = {}
+    for _, right in ipairs(rules[nterm]) do
+        if len - 1 + #right <= maxlen then
+            local wordsprev = { [""] = 0 }
+            for _, symb in ipairs(right) do
+                local wordsnext = {}
+                if type(symb) == "table" then
+                    local wordsnew = expand(symb[1], rules, len - 1 + #right, h + 1)
+                    if wordsnew then
+                        for wordnew, _ in pairs(wordsnew) do
+                            for wordprev, _ in pairs(wordsprev) do
+                                local wordnext = wordprev .. wordnew
+                                if string.len(wordnext) <= maxlen then
+                                    wordsnext[wordnext] = 0
+                                end
+                            end
+                        end
+                    end
+                else
+                    for wordprev, _ in pairs(wordsprev) do
+                        local wordnext = wordprev .. symb
+                        if string.len(wordnext) <= maxlen then
+                            wordsnext[wordnext] = 0
+                        end
+                    end
+                end
+                wordsprev = wordsnext
+            end
+
+            for w, _ in pairs(wordsprev) do
+                wordsAll[w] = 0
+            end
+        end
+    end
+
+    return wordsAll
+end
+
+function checkEqual(st, r, what)
+    local failed = false
+    local lan = expand(st, r, 0)
+    local function checkNest(lan1, lan2, name1, name2)
+        for w1, _ in pairs(lan1) do
+            if not lan2[w1] then 
+                io.write("after " .. what .. " checkEqual failed: ".. w1 .. " from " .. name1 .. " dont below in ".. name2.. "\n")
+                failed = true
+            end
+        end
+    end
+    checkNest(lan, g_language, "newlang", "startlang")
+    checkNest(g_language, lan, "startlang", "newlang")
+    if failed then
+        error("checkEqual after " .. what .. " failed")
+    else
+        io.write("checkEqual after ".. what .. " was successful\n")
+    end
+end
+
 function main()
     local rules = inputRules()
-    local startNterm = makeCNF(rules, "S") -- require не робит, так что в main.lua сделано
-    removeUnreachableNterms(rules, startNterm) -- после привидения к хнф могут появиться
+    local startNterm = "S"
+    if CFG_CHECK_EQUAL then
+        eliminEpsRules(rules)
+        g_language = expand("S", rules)
+        g_size = 0
+        for w, _ in pairs(g_language) do g_size = g_size + 1 end
+        -- dump(g_language, "g_language " .. g_size)
+    end
+    local startNterm = makeCNF(rules, "S")
+    removeUnreachableNterms(rules, startNterm)
     local rulesCopy = copy(rules)
     leftRecAlgorithm(rules, startNterm)
+    if CFG_CHECK_EQUAL then
+        checkEqual(startNterm, rules, "leftRecAlgorithm")
+    end
     blumKochAlgorithm(rulesCopy, startNterm)
+    if CFG_CHECK_EQUAL then
+        checkEqual(startNterm, rulesCopy, "blumKochAlgorithm")
+    end
 end
 
 main()
